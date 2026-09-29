@@ -1,0 +1,98 @@
+// Strategy 23: Gold 5-Minute Scalp & Intraday Fusion (Tight Stop-Loss Protected)
+// Specially engineered for the 5-Minute Timeframe on Gold (XAUUSD / GC=F)
+// Prevents 200+ point stop-loss risks by enforcing a tight $6–$10 point hard cap.
+//@version=6
+strategy("AlphaQuant - Gold 5M Scalp Fusion [Tight SL Cap]", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03, slippage=1)
+
+// --- Settings ---
+group_macro = "Higher Timeframe (HTF) Institutional Filter"
+htfTimeframe = input.timeframe("60", "HTF Trend Timeframe", group=group_macro)
+htfEmaLen    = input.int(50, "HTF EMA Baseline", group=group_macro)
+stPeriod     = input.int(10, "Supertrend ATR Period", group=group_macro)
+stMult       = input.float(3.0, "Supertrend Multiplier", step=0.1, group=group_macro)
+
+group_5m     = "5-Minute Execution & SMC Sweep Settings"
+swingLen     = input.int(6, "5M Swing Pivot Lookback", group=group_5m)
+cooldownBars = input.int(6, "Cooldown Bars Between Trades", group=group_5m)
+
+group_risk   = "Tight Stop-Loss & Risk Management"
+maxSlPoints  = input.float(8.0, "Max Stop Loss Cap (in $ / Points)", minval=2.0, maxval=20.0, step=0.5, group=group_risk, tooltip="Hard cap to prevent large stop loss hits. A $8 cap on Gold limits loss to $8 per ounce.")
+slAtrMult    = input.float(1.2, "5M ATR Stop Multiple", step=0.1, group=group_risk)
+rrRatio      = input.float(1.8, "Risk-to-Reward Ratio (1:1.8)", step=0.1, group=group_risk)
+
+group_session = "Trading Session Filter (UTC)"
+useSessionFilter = input.bool(true, "Trade Only Active Sessions (London/NY)", group=group_session)
+sessionHours     = input.session("0700-2000", "Active Session Window (UTC)", group=group_session)
+
+// --- Higher Timeframe Trend Data ---
+htfClose = request.security(syminfo.tickerid, htfTimeframe, close)
+htfHigh  = request.security(syminfo.tickerid, htfTimeframe, high)
+htfLow   = request.security(syminfo.tickerid, htfTimeframe, low)
+htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, htfEmaLen))
+[htfStVal, htfStDir] = request.security(syminfo.tickerid, htfTimeframe, ta.supertrend(stMult, stPeriod))
+
+htfBull = (htfClose > htfEma) and (htfStDir < 0)
+htfBear = (htfClose < htfEma) and (htfStDir > 0)
+
+// --- 5-Minute SMC Calculations ---
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float swingLowP = na
+var float swingHighP = na
+
+if not na(pl)
+    swingLowP := low[swingLen]
+
+if not na(ph)
+    swingHighP := high[swingLen]
+
+atr5m = ta.atr(14)
+
+// 5M Liquidity Sweep Trigger
+sweepBull5m = not na(swingLowP) and (low < swingLowP) and (close > swingLowP) and (close > open)
+sweepBear5m = not na(swingHighP) and (high > swingHighP) and (close < swingHighP) and (close < open)
+
+// Session check
+inSession = not useSessionFilter or not na(time(timeframe.period, sessionHours + ":1234567"))
+
+// Cooldown check
+var int lastBarClosed = -999
+canTrade = (bar_index - lastBarClosed) >= cooldownBars
+
+// Entry conditions
+longSignal  = htfBull and sweepBull5m and inSession and canTrade and (strategy.position_size == 0)
+shortSignal = htfBear and sweepBear5m and inSession and canTrade and (strategy.position_size == 0)
+
+// Order Execution with Hard-Capped Stop Loss
+var float entryPrice = na
+var float slPrice = na
+var float tpPrice = na
+
+if longSignal
+    // Calculate raw risk, then enforce maxSlPoints hard cap
+    rawRisk = math.max(close - low, atr5m * slAtrMult)
+    cappedRisk = math.min(rawRisk, maxSlPoints)
+    
+    slPrice := close - cappedRisk
+    tpPrice := close + (cappedRisk * rrRatio)
+    
+    strategy.entry("Scalp_Long", strategy.long)
+    strategy.exit("Exit_Long", "Scalp_Long", stop=slPrice, limit=tpPrice)
+    lastBarClosed := bar_index
+
+if shortSignal
+    rawRisk = math.max(high - close, atr5m * slAtrMult)
+    cappedRisk = math.min(rawRisk, maxSlPoints)
+    
+    slPrice := close + cappedRisk
+    tpPrice := close - (cappedRisk * rrRatio)
+    
+    strategy.entry("Scalp_Short", strategy.short)
+    strategy.exit("Exit_Short", "Scalp_Short", stop=slPrice, limit=tpPrice)
+    lastBarClosed := bar_index
+
+// Visuals
+plot(htfEma, "HTF 1H Baseline", color=color.new(color.orange, 20), linewidth=2)
+plot(swingLowP, "5M Swing Low", color=color.new(color.teal, 60), style=plot.style_circles)
+plot(swingHighP, "5M Swing High", color=color.new(color.purple, 60), style=plot.style_circles)
