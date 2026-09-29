@@ -1,0 +1,12 @@
+[
+  {
+    "timestamp": "2026-09-29 10:33:26",
+    "strategy": "Flagship SMC Engine",
+    "symbol": "NIFTY",
+    "action": "BUY",
+    "qty": 50,
+    "sl": 22500.0,
+    "price": 22600.0,
+    "status": "FILLED_PAPER"
+  }
+]

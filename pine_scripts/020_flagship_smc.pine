@@ -1,0 +1,49 @@
+// Strategy 20: Flagship Multi-Rule SMC Engine (Sweep + CHOCH + FVG)
+//@version=6
+strategy("AlphaQuant - Flagship SMC Engine", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03, slippage=1)
+
+swingLen = input.int(7, "Pivot Lookback")
+rr = input.float(2.5, "Risk to Reward")
+
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float sH = na
+var float sL = na
+if not na(ph)
+    sH := high[swingLen]
+if not na(pl)
+    sL := low[swingLen]
+
+var bool sweptL = false
+var bool sweptH = false
+var float sweepLowP = na
+var float sweepHighP = na
+
+if not na(sL) and low < sL and close > sL
+    sweptL := true
+    sweepLowP := low
+
+if not na(sH) and high > sH and close < sH
+    sweptH := true
+    sweepHighP := high
+
+bullFVG = low > high[2] and close[1] > high[2]
+bearFVG = high < low[2] and close[1] < low[2]
+
+longSig = sweptL and close > ta.highest(high, swingLen)[1] and bullFVG
+shortSig = sweptH and close < ta.lowest(low, swingLen)[1] and bearFVG
+
+if longSig and strategy.position_size == 0
+    sl = sweepLowP
+    tp = close + (close - sl) * rr
+    strategy.entry("Flagship_L", strategy.long, alert_message='{"action":"BUY", "sl":' + str.tostring(sl) + '}')
+    strategy.exit("Exit_FL", "Flagship_L", stop=sl, limit=tp, alert_message='{"action":"CLOSE_LONG"}')
+    sweptL := false
+
+if shortSig and strategy.position_size == 0
+    sl = sweepHighP
+    tp = close - (sl - close) * rr
+    strategy.entry("Flagship_S", strategy.short, alert_message='{"action":"SELL", "sl":' + str.tostring(sl) + '}')
+    strategy.exit("Exit_FS", "Flagship_S", stop=sl, limit=tp, alert_message='{"action":"CLOSE_SHORT"}')
+    sweptH := false

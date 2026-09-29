@@ -1,0 +1,16 @@
+// Strategy 13: FVG Retest + Structural BOS (Most Profitable in Multi-Year Backtest)
+//@version=6
+strategy("Algo 13: FVG Retest + BOS", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03, slippage=1)
+
+bullishFVG = low > high[2] and close[1] > high[2]
+var float fvgHigh = na
+var float fvgLow = na
+
+if bullishFVG and close > ta.highest(high, 8)[1]
+    fvgHigh := low
+    fvgLow := high[2]
+
+if low <= fvgHigh and close >= fvgLow and not na(fvgHigh) and strategy.position_size == 0
+    strategy.entry("FVG_Long", strategy.long)
+    strategy.exit("Exit_FVG", "FVG_Long", stop=fvgLow - ta.atr(14) * 0.5, limit=close + (close - fvgLow) * 2.5)
+    fvgHigh := na

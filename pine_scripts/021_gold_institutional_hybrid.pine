@@ -1,0 +1,96 @@
+// Elite Gold Institutional Hybrid Strategy (XAUUSD / GC=F)
+// Engineered to solve overtrading, maximize win rate, and capture multi-day Gold expansions
+//@version=6
+strategy("AlphaQuant - Elite Gold Institutional Engine", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03, slippage=1)
+
+// --- Inputs ---
+group_trend = "Trend & Regime Filters"
+emaMacroLen = input.int(200, "Macro 200 EMA Filter", group=group_trend)
+emaMidLen   = input.int(50, "Intermediate 50 EMA Filter", group=group_trend)
+useSession  = input.bool(true, "Trade London & NY Sessions Only (07:00-18:00 UTC)", group=group_trend)
+
+group_st = "Volatility & Supertrend Engine"
+stMult = input.float(3.0, "Supertrend Multiplier", step=0.1, group=group_st)
+stPeriod = input.int(10, "Supertrend ATR Period", group=group_st)
+maxRsiLong = input.int(65, "Max RSI for Long (Prevent Chasing)", group=group_st)
+minRsiShort = input.int(35, "Min RSI for Short (Prevent Chasing)", group=group_st)
+
+group_risk = "Asymmetric Risk & Target Engine"
+slAtrMult = input.float(1.8, "Stop Loss ATR Multiple", step=0.1, group=group_risk)
+tp1AtrMult = input.float(1.5, "Partial TP 1 ATR Multiple (High Win Rate)", step=0.1, group=group_risk)
+
+// --- Indicators ---
+emaMacro = ta.ema(close, emaMacroLen)
+emaMid   = ta.ema(close, emaMidLen)
+atrVal   = ta.atr(14)
+rsiVal   = ta.rsi(close, 14)
+[stVal, stDir] = ta.supertrend(stMult, stPeriod)
+
+// Directional Flips
+bullFlip = ta.crossunder(stDir, 0)
+bearFlip = ta.crossover(stDir, 0)
+
+// Session Filter (UTC)
+inSession = true
+if useSession
+    t = time(timeframe.period, "0700-1800:1234567", "UTC")
+    inSession := not na(t)
+
+// Trend Regimes
+bullRegime = (close > emaMacro) and (emaMid > emaMacro)
+bearRegime = (close < emaMacro) and (emaMid < emaMacro)
+
+// Entry Signals (Single-bar trigger prevents overtrading)
+longEntrySig  = bullFlip and bullRegime and (rsiVal <= maxRsiLong) and inSession
+shortEntrySig = bearFlip and bearRegime and (rsiVal >= minRsiShort) and inSession
+
+// --- Execution & State Tracking ---
+var float entryPrice = na
+var float slLevel = na
+var float tp1Level = na
+var bool tp1Hit = false
+
+if longEntrySig and strategy.position_size == 0
+    entryPrice := close
+    slLevel := close - (atrVal * slAtrMult)
+    tp1Level := close + (atrVal * tp1AtrMult)
+    tp1Hit := false
+    strategy.entry("Gold_Long", strategy.long)
+
+if shortEntrySig and strategy.position_size == 0
+    entryPrice := close
+    slLevel := close + (atrVal * slAtrMult)
+    tp1Level := close - (atrVal * tp1AtrMult)
+    tp1Hit := false
+    strategy.entry("Gold_Short", strategy.short)
+
+// Position Management & Trailing
+if strategy.position_size > 0
+    // Check if Partial TP / Break-Even threshold reached
+    if not tp1Hit and high >= tp1Level
+        tp1Hit := true
+        slLevel := entryPrice * 1.0005 // Move stop to breakeven + fees
+
+    // Exit on Stop Loss or Breakeven
+    if low <= slLevel
+        strategy.close("Gold_Long", comment="SL/BE Exit")
+
+    // Exit on Trend Reversal (Supertrend flips red)
+    if stDir > 0
+        strategy.close("Gold_Long", comment="Trend Flip Exit")
+
+if strategy.position_size < 0
+    if not tp1Hit and low <= tp1Level
+        tp1Hit := true
+        slLevel := entryPrice * 0.9995
+
+    if high >= slLevel
+        strategy.close("Gold_Short", comment="SL/BE Exit")
+
+    if stDir < 0
+        strategy.close("Gold_Short", comment="Trend Flip Exit")
+
+// Visual Styling
+plot(emaMacro, "200 EMA Macro", color=color.new(color.orange, 0), linewidth=2)
+plot(emaMid, "50 EMA Intermediate", color=color.new(color.blue, 30), linewidth=1)
+plot(stVal, "Supertrend Line", color=stDir < 0 ? color.green : color.red, linewidth=2)

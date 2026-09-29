@@ -1,0 +1,47 @@
+================================================================================
+ QUANTITATIVE SAAS DASHBOARD - ENVIRONMENT & DATABASE SETUP
+================================================================================
+
+1. ZERO-CONFIGURATION DEFAULT (READY OUT-OF-THE-BOX):
+--------------------------------------------------------------------------------
+By default, the dashboard runs with a local SQLite high-performance database:
+Location: dashboard/database/quant_trading.db
+
+You DO NOT need to configure anything to start viewing and interacting with the
+backtests, trade logs, and metrics. Everything is pre-loaded and ready.
+
+
+2. OPTIONAL: CONNECT TO A REAL CLOUD DATABASE (Supabase / PostgreSQL / Neon / Render)
+--------------------------------------------------------------------------------
+If you want to store your live trades and backtests in a cloud PostgreSQL or
+Supabase database, create a file named `.env` inside the `dashboard/` directory:
+
+File: /Users/ubs_android/algo/dashboard/.env
+
+Paste the following variables:
+
+# --- Database Connection (PostgreSQL / Supabase / Neon) ---
+DATABASE_URL="postgresql://postgres:[YOUR-PASSWORD]@db.[YOUR-PROJECT].supabase.co:5432/postgres"
+
+# --- Webhook Authentication Secret ---
+WEBHOOK_SECRET="ALPHA_SECRET_KEY_987"
+
+# --- Optional Broker Keys (For Live Execution Firing) ---
+BROKER_API_KEY=""
+BROKER_API_SECRET=""
+BROKER_CLIENT_ID=""
+
+# --- Server Port ---
+PORT=3000
+
+
+3. HOW TO START THE SAAS DASHBOARD:
+--------------------------------------------------------------------------------
+Open terminal in the project root:
+  cd dashboard
+  npm run dev
+
+Then open your browser at:
+  http://localhost:5173
+
+================================================================================
