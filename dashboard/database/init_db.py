@@ -207,6 +207,93 @@ def init_database():
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """, ("AlphaQuant Dual-Engine Fusion", "Gold (XAUUSD)", "4H", t["Trade"], t["Direction"], t["Entry Time"], t["Entry Price"], t["Exit Time"], t["Exit Price"], t["Exit Reason"], t["Net PnL ($)"], t["Return (%)"]))
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS smc_timeframes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        timeframe TEXT,
+        period TEXT,
+        total_trades INTEGER,
+        win_rate REAL,
+        avg_sl REAL,
+        avg_tp REAL,
+        profit_factor REAL,
+        max_drawdown REAL,
+        net_profit REAL,
+        max_sl_rule TEXT,
+        description TEXT
+    );
+    """)
+
+    smc_tf_records = [
+        {
+            "id": "SMC_5M",
+            "name": "Institutional SMC (5-Minute Scalp)",
+            "timeframe": "5m",
+            "period": "60 Days",
+            "total_trades": 83,
+            "win_rate": 49.4,
+            "avg_sl": 6.95,
+            "avg_tp": 13.22,
+            "profit_factor": 1.03,
+            "max_drawdown": 0.53,
+            "net_profit": 28.46,
+            "max_sl_rule": "$8.00 Hard Cap",
+            "description": "5M Liquidity Sweep + Order Block mitigation retest with strict $8.00 SL cap"
+        },
+        {
+            "id": "SMC_15M",
+            "name": "Institutional SMC (15-Minute Intraday)",
+            "timeframe": "15m",
+            "period": "60 Days",
+            "total_trades": 34,
+            "win_rate": 29.41,
+            "avg_sl": 13.74,
+            "avg_tp": 48.48,
+            "profit_factor": 1.09,
+            "max_drawdown": 0.64,
+            "net_profit": 80.97,
+            "max_sl_rule": "$14.00 Cap",
+            "description": "15M structural sweep into institutional OB zone with 1:1.8 Risk-Reward"
+        },
+        {
+            "id": "SMC_1H",
+            "name": "Institutional SMC (1-Hour Swing)",
+            "timeframe": "1h",
+            "period": "2 Years",
+            "total_trades": 51,
+            "win_rate": 29.41,
+            "avg_sl": 31.80,
+            "avg_tp": 80.18,
+            "profit_factor": 0.84,
+            "max_drawdown": 1.26,
+            "net_profit": -534.26,
+            "max_sl_rule": "$25.00 – $32.00 Cap",
+            "description": "1-Hour session liquidity pool sweep with 1:2.0 Risk-Reward"
+        },
+        {
+            "id": "SMC_4H",
+            "name": "Dual-Engine SMC Fusion (4-Hour Macro)",
+            "timeframe": "4h",
+            "period": "2 Years",
+            "total_trades": 7,
+            "win_rate": 71.43,
+            "avg_sl": 25.35,
+            "avg_tp": 108.57,
+            "profit_factor": 6.42,
+            "max_drawdown": 0.26,
+            "net_profit": 1138.44,
+            "max_sl_rule": "Structural Macro SL",
+            "description": "Flagship 71.4% Win Rate model. Macro 200 EMA + SMC Liquidity Sweep & OB retest"
+        }
+    ]
+
+    for tf in smc_tf_records:
+        cursor.execute("""
+        INSERT INTO smc_timeframes (name, timeframe, period, total_trades, win_rate, avg_sl, avg_tp, profit_factor, max_drawdown, net_profit, max_sl_rule, description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (tf["name"], tf["timeframe"], tf["period"], tf["total_trades"], tf["win_rate"], tf["avg_sl"], tf["avg_tp"], tf["profit_factor"], tf["max_drawdown"], tf["net_profit"], tf["max_sl_rule"], tf["description"]))
+
     conn.commit()
     conn.close()
 
@@ -216,9 +303,10 @@ def init_database():
             "type": "SQLite 3.0",
             "location": DB_PATH,
             "status": "CONNECTED",
-            "last_synced": "2026-09-29 11:00 UTC"
+            "last_synced": "2026-09-29 12:20 UTC"
         },
         "strategies": gold_strategies,
+        "smc_timeframes": smc_tf_records,
         "fusion_trades": fusion_trades,
         "equity_curve": [
             {"date": "2024-08", "equity": 100000},

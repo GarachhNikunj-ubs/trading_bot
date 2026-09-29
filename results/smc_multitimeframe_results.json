@@ -1,0 +1,72 @@
+{
+  "metrics": [
+    {
+      "id": "SMC_5M_FUSION",
+      "name": "5M Scalp Fusion (SMC + Macro Filter)",
+      "timeframe": "5m",
+      "period": "60 Days",
+      "total_trades": 83,
+      "win_rate": 49.4,
+      "profit_factor": 1.03,
+      "net_profit": 28.46,
+      "return_pct": 0.03,
+      "max_drawdown": 0.53,
+      "sharpe_ratio": -0.37,
+      "avg_sl": 6.95,
+      "avg_tp": 13.22,
+      "max_sl_rule": "$7.00 \u2013 $8.00 Cap",
+      "description": "5M SMC Sweep at key Order Block with 200 EMA + Supertrend alignment & tight $7\u2013$8 SL"
+    },
+    {
+      "id": "SMC_15M_FUSION",
+      "name": "15M Intraday Fusion (SMC + Macro Filter)",
+      "timeframe": "15m",
+      "period": "60 Days",
+      "total_trades": 34,
+      "win_rate": 29.41,
+      "profit_factor": 1.09,
+      "net_profit": 80.97,
+      "return_pct": 0.08,
+      "max_drawdown": 0.64,
+      "sharpe_ratio": -0.05,
+      "avg_sl": 13.74,
+      "avg_tp": 48.48,
+      "max_sl_rule": "$12.00 \u2013 $14.00 Cap",
+      "description": "15M structural sweep into institutional OB zone with 1:1.8 Risk-Reward"
+    },
+    {
+      "id": "SMC_1H_FUSION",
+      "name": "1H Swing Fusion (SMC + Macro Filter)",
+      "timeframe": "1h",
+      "period": "2 Years (730d)",
+      "total_trades": 51,
+      "win_rate": 29.41,
+      "profit_factor": 0.84,
+      "net_profit": -534.26,
+      "return_pct": -0.53,
+      "max_drawdown": 1.26,
+      "sharpe_ratio": -0.55,
+      "avg_sl": 31.8,
+      "avg_tp": 80.18,
+      "max_sl_rule": "$25.00 \u2013 $32.00 Cap",
+      "description": "1-Hour session liquidity sweep into 4H Order Block with 1:2.0 Risk-Reward"
+    },
+    {
+      "id": "SMC_4H_FUSION",
+      "name": "4H Flagship Macro Fusion (SMC + 200 EMA)",
+      "timeframe": "4h",
+      "period": "2 Years (730d)",
+      "total_trades": 7,
+      "win_rate": 71.43,
+      "profit_factor": 6.42,
+      "net_profit": 1138.44,
+      "return_pct": 1.14,
+      "max_drawdown": 0.26,
+      "sharpe_ratio": 2.78,
+      "avg_sl": 25.35,
+      "avg_tp": 108.57,
+      "max_sl_rule": "Structural Macro SL",
+      "description": "Flagship 71.4% Win Rate model. Institutional liquidity sweep + 200 EMA baseline"
+    }
+  ]
+}

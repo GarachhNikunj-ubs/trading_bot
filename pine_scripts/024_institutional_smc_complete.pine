@@ -1,0 +1,110 @@
+// Strategy 24: Institutional SMC Complete [Sweep + OB + CHOCH + Power of 3 AMD]
+// Based on Institutional Footprints:
+//   1. Liquidity Sweep (Manipulation): Stop run beyond prior swing high/low
+//   2. Change of Character (CHOCH): Market structure reversal confirmation
+//   3. Order Block (OB): Entry on mitigation of the institutional accumulation/distribution zone
+//@version=6
+strategy("AlphaQuant - Institutional SMC [Sweep + OB + CHOCH]", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03, slippage=1)
+
+// --- Settings ---
+group_smc    = "SMC Structure & Sweep Settings"
+swingLen     = input.int(5, "Swing Pivot Lookback (Structure)", group=group_smc)
+rrRatio      = input.float(2.5, "Risk-to-Reward Ratio (1:2.5)", step=0.1, group=group_smc)
+cooldownBars = input.int(4, "Cooldown Bars Between Trades", group=group_smc)
+
+group_risk   = "Risk Management & Stop Loss Cap"
+useSlCap     = input.bool(true, "Enforce Hard Stop-Loss Cap", group=group_risk)
+maxSlCap     = input.float(8.0, "Max Stop Loss Cap ($ / Points)", step=0.5, group=group_risk, tooltip="Enforces maximum loss per trade (e.g. $8 on 5m, $15 on 15m). Set higher for 1H/4H.")
+
+// --- SMC Swing Levels ---
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float recentPL = na
+var float recentPH = na
+
+if not na(pl)
+    recentPL := low[swingLen]
+
+if not na(ph)
+    recentPH := high[swingLen]
+
+atrVal = ta.atr(14)
+
+// --- 1. Liquidity Sweep Detection (Manipulation Phase) ---
+var bool bullSetup = false
+var bool bearSetup = false
+var float sweepLowP = na
+var float sweepHighP = na
+var float obBullHigh = na
+var float obBullLow = na
+var float obBearHigh = na
+var float obBearLow = na
+var int setupBar = -999
+
+sweepBull = not na(recentPL) and (low < recentPL) and (close > recentPL)
+sweepBear = not na(recentPH) and (high > recentPH) and (close < recentPH)
+
+if sweepBull and not bullSetup
+    bullSetup := true
+    sweepLowP := low
+    obBullLow := math.min(low, low[1])
+    obBullHigh := math.max(open, high[1])
+    setupBar := bar_index
+
+if sweepBear and not bearSetup
+    bearSetup := true
+    sweepHighP := high
+    obBearLow := math.min(open, low[1])
+    obBearHigh := math.max(high, high[1])
+    setupBar := bar_index
+
+// Timeout setup after 20 bars
+if (bar_index - setupBar) > 20
+    bullSetup := false
+    bearSetup := false
+
+var int lastTradeBar = -999
+canTrade = (bar_index - lastTradeBar) >= cooldownBars
+
+// --- 2. Order Block Retest & CHOCH Confirmation ---
+var float slPrice = na
+var float tpPrice = na
+
+// Long Entry
+if bullSetup and (bar_index > setupBar) and canTrade and (strategy.position_size == 0)
+    mitigated = (low <= obBullHigh and close >= obBullLow)
+    isGreen = (close > open)
+    
+    if (mitigated or close > high[bar_index - setupBar]) and isGreen
+        rawRisk = math.max(close - sweepLowP, atrVal * 1.0)
+        risk = useSlCap ? math.min(rawRisk, maxSlCap) : rawRisk
+        
+        slPrice := close - risk
+        tpPrice := close + (risk * rrRatio)
+        
+        strategy.entry("SMC_Long", strategy.long)
+        strategy.exit("Exit_Long", "SMC_Long", stop=slPrice, limit=tpPrice)
+        lastTradeBar := bar_index
+        bullSetup := false
+
+// Short Entry
+if bearSetup and (bar_index > setupBar) and canTrade and (strategy.position_size == 0)
+    mitigated = (high >= obBearLow and close <= obBearHigh)
+    isRed = (close < open)
+    
+    if (mitigated or close < low[bar_index - setupBar]) and isRed
+        rawRisk = math.max(sweepHighP - close, atrVal * 1.0)
+        risk = useSlCap ? math.min(rawRisk, maxSlCap) : rawRisk
+        
+        slPrice := close + risk
+        tpPrice := close - (risk * rrRatio)
+        
+        strategy.entry("SMC_Short", strategy.short)
+        strategy.exit("Exit_Short", "SMC_Short", stop=slPrice, limit=tpPrice)
+        lastTradeBar := bar_index
+        bearSetup := false
+
+// Visuals
+plot(recentPL, "Liquidity Low", color=color.new(color.teal, 60), style=plot.style_circles)
+plot(recentPH, "Liquidity High", color=color.new(color.maroon, 60), style=plot.style_circles)
