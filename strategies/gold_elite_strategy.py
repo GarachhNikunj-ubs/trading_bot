@@ -1,135 +1,188 @@
-import os
-import numpy as np
+import yfinance as yf
 import pandas as pd
-from engine.data import load_or_fetch_data
+import numpy as np
+from tabulate import tabulate
 from engine.backtester import BacktestEngine
-from engine.indicators import calculate_ema, calculate_atr, calculate_rsi
+from engine.indicators import calculate_ema, calculate_supertrend, calculate_pivots, calculate_atr
 
-def calculate_adx(df: pd.DataFrame, length: int = 14):
-    """Calculates Wilder's ADX for trend strength."""
-    high = df['high']
-    low = df['low']
-    close = df['close']
+def search_5m_high_winrate():
+    print("Loading 5m Gold data (60 days)...")
+    df_5m = yf.download('GC=F', interval='5m', period='60d', progress=False)
+    if isinstance(df_5m.columns, pd.MultiIndex):
+        df_5m.columns = [c[0].lower() for c in df_5m.columns]
+    else:
+        df_5m.columns = [c.lower() for c in df_5m.columns]
+    df_5m.dropna(inplace=True)
     
-    tr1 = high - low
-    tr2 = (high - close.shift(1)).abs()
-    tr3 = (low - close.shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/length, adjust=False).mean()
+    # 1H HTF Trend Filter
+    df_1h = df_5m.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
+    htf_ema50 = calculate_ema(df_1h['close'], 50)
+    htf_ema200 = calculate_ema(df_1h['close'], 200)
+    st_val_1h, st_dir_1h = calculate_supertrend(df_1h, 10, 3.0)
     
-    up_move = high - high.shift(1)
-    down_move = low.shift(1) - low
+    # HTF Alignment: Supertrend Bullish + Close > EMA50
+    htf_bull_strong = ((df_1h['close'] > htf_ema50) & (st_dir_1h < 0)).reindex(df_5m.index, method='ffill').fillna(False)
+    htf_bear_strong = ((df_1h['close'] < htf_ema50) & (st_dir_1h > 0)).reindex(df_5m.index, method='ffill').fillna(False)
     
-    pos_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    neg_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    atr_5m = calculate_atr(df_5m, 14)
+    n = len(df_5m)
     
-    pos_di = 100 * pd.Series(pos_dm, index=df.index).ewm(alpha=1/length, adjust=False).mean() / atr
-    neg_di = 100 * pd.Series(neg_dm, index=df.index).ewm(alpha=1/length, adjust=False).mean() / atr
+    engine = BacktestEngine(100000.0, qty_pct=0.10, commission_pct=0.0003, slippage_pct=0.0001)
     
-    dx = 100 * (pos_di - neg_di).abs() / (pos_di + neg_di).replace(0, np.nan)
-    adx = dx.ewm(alpha=1/length, adjust=False).mean()
-    return adx, pos_di, neg_di
+    # Parameter grid search
+    experiments = []
+    print("Testing 5M Gold Elite Parameter Matrix...")
+    
+    for swing_len in [5, 7]:
+        ph, pl = calculate_pivots(df_5m, swing_len, swing_len)
+        
+        for max_sl in [5.0, 7.0, 8.0, 10.0]:
+            for rr in [0.8, 1.0, 1.2, 1.5, 2.0]:
+                for cd in [4, 6, 10]:
+                    long_entry = [False] * n
+                    short_entry = [False] * n
+                    sl = [np.nan] * n
+                    tp = [np.nan] * n
+                    
+                    s_low = np.nan
+                    s_high = np.nan
+                    last_idx = -999
+                    
+                    for i in range(100, n):
+                        if not np.isnan(pl.iloc[i]): s_low = pl.iloc[i]
+                        if not np.isnan(ph.iloc[i]): s_high = ph.iloc[i]
+                        
+                        if (i - last_idx) < cd: continue
+                        
+                        # Session Filter: London + NY (07:00 to 18:00 UTC)
+                        hour = df_5m.index[i].hour
+                        if not (7 <= hour < 18): continue
+                        
+                        c = df_5m['close'].iloc[i]
+                        o = df_5m['open'].iloc[i]
+                        h = df_5m['high'].iloc[i]
+                        l = df_5m['low'].iloc[i]
+                        a = atr_5m.iloc[i] if not np.isnan(atr_5m.iloc[i]) else 2.5
+                        
+                        # Bullish Liquidity Sweep into 1H Bullish Trend
+                        if bool(htf_bull_strong.iloc[i]) and not np.isnan(s_low) and (l < s_low) and (c > s_low) and (c > o):
+                            raw_risk = max(c - l, a * 1.0)
+                            risk = min(raw_risk, max_sl)
+                            long_entry[i] = True
+                            sl[i] = c - risk
+                            tp[i] = c + (risk * rr)
+                            last_idx = i
+                            
+                        # Bearish Liquidity Sweep into 1H Bearish Trend
+                        elif bool(htf_bear_strong.iloc[i]) and not np.isnan(s_high) and (h > s_high) and (c < s_high) and (c < o):
+                            raw_risk = max(h - c, a * 1.0)
+                            risk = min(raw_risk, max_sl)
+                            short_entry[i] = True
+                            sl[i] = c + risk
+                            tp[i] = c - (risk * rr)
+                            last_idx = i
+                            
+                    sigs = pd.DataFrame({
+                        'long_entry': long_entry,
+                        'short_entry': short_entry,
+                        'long_exit': False,
+                        'short_exit': False,
+                        'stop_loss': sl,
+                        'take_profit': tp
+                    }, index=df_5m.index)
+                    
+                    metrics = engine.execute_backtest(df_5m, f"Gold_5M_SL{max_sl}_RR{rr}_CD{cd}", sigs)
+                    
+                    if metrics['Total Trades'] >= 15:
+                        experiments.append({
+                            'Swing': swing_len,
+                            'MaxSL': max_sl,
+                            'RR': rr,
+                            'Cooldown': cd,
+                            'Trades': metrics['Total Trades'],
+                            'WinRate (%)': metrics['Win Rate (%)'],
+                            'ProfitFactor': metrics['Profit Factor'],
+                            'NetProfit ($)': metrics['Net Profit ($)'],
+                            'Return (%)': metrics['Return (%)'],
+                            'MaxDD (%)': metrics['Max Drawdown (%)']
+                        })
+                        
+    if experiments:
+        exp_df = pd.DataFrame(experiments)
+        # Sort by Win Rate
+        sorted_wr = exp_df.sort_values(by=['WinRate (%)', 'NetProfit ($)'], ascending=[False, False]).reset_index(drop=True)
+        print("\n" + "="*85)
+        print(" TOP 15 GOLD ELITE 5M SETUPS RANKED BY WIN RATE")
+        print("="*85)
+        print(tabulate(sorted_wr.head(15), headers="keys", tablefmt="github", showindex=True))
+        
+        # Sort by Net Profit
+        sorted_pnl = exp_df.sort_values(by=['NetProfit ($)', 'WinRate (%)'], ascending=[False, False]).reset_index(drop=True)
+        print("\n" + "="*85)
+        print(" TOP 10 GOLD ELITE 5M SETUPS RANKED BY NET PROFIT")
+        print("="*85)
+        print(tabulate(sorted_pnl.head(10), headers="keys", tablefmt="github", showindex=True))
+        return sorted_wr
+    else:
+        print("No valid experiments completed.")
+        return None
 
-def gold_elite_trend_pullback(
-    df: pd.DataFrame,
-    ema_trend_len: int = 200,
-    ema_fast_len: int = 21,
-    ema_mid_len: int = 50,
-    adx_threshold: float = 22.0,
-    tp_mult: float = 2.0,
-    sl_mult: float = 1.2
-) -> pd.DataFrame:
-    """
-    Gold Institutional Trend-Pullback & Liquidity Engine:
-    1. Macro Regime: Close > EMA 200 and EMA 50 > EMA 200 (Long only in bull market).
-    2. Trend Strength: ADX(14) > threshold (avoids consolidation whipsaws).
-    3. Retracement Trigger: Price pulls back to tag EMA 21 or EMA 50 with RSI between 40 and 60.
-    4. Confirmation: Bullish rejection candle closing back above EMA 21.
-    5. Tight Risk / High Asymmetry: SL below recent 3-bar swing low; TP at 2.0x risk.
-    """
-    signals = pd.DataFrame(index=df.index)
-    close = df['close']
-    high = df['high']
-    low = df['low']
-    open_p = df['open']
+def gold_elite_strategy(df: pd.DataFrame, swing_len: int = 5, max_sl: float = 8.0, rr: float = 1.0, cooldown: int = 6) -> pd.DataFrame:
+    """Production Gold Elite 5M Strategy Function"""
+    df_1h = df.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
+    htf_ema50 = calculate_ema(df_1h['close'], 50)
+    st_val_1h, st_dir_1h = calculate_supertrend(df_1h, 10, 3.0)
+    htf_bull_strong = ((df_1h['close'] > htf_ema50) & (st_dir_1h < 0)).reindex(df.index, method='ffill').fillna(False)
+    htf_bear_strong = ((df_1h['close'] < htf_ema50) & (st_dir_1h > 0)).reindex(df.index, method='ffill').fillna(False)
+    
+    ph, pl = calculate_pivots(df, swing_len, swing_len)
+    atr = calculate_atr(df, 14)
     n = len(df)
     
-    ema_fast = calculate_ema(close, ema_fast_len)
-    ema_mid = calculate_ema(close, ema_mid_len)
-    ema_trend = calculate_ema(close, ema_trend_len)
-    atr = calculate_atr(df, 14)
-    rsi = calculate_rsi(close, 14)
-    adx, pos_di, neg_di = calculate_adx(df, 14)
-    
-    long_entries = [False] * n
-    short_entries = [False] * n
+    long_entry = [False] * n
+    short_entry = [False] * n
     sl = [np.nan] * n
     tp = [np.nan] * n
     
-    for i in range(max(ema_trend_len, 50), n):
-        # Time / Session filter if DatetimeIndex available (focus on London/NY sessions: 07:00 - 20:00 UTC)
-        if isinstance(df.index, pd.DatetimeIndex):
-            hour = df.index[i].hour
-            in_session = (7 <= hour <= 20)
-        else:
-            in_session = True
+    s_low = np.nan
+    s_high = np.nan
+    last_idx = -999
+    
+    for i in range(100, n):
+        if not np.isnan(pl.iloc[i]): s_low = pl.iloc[i]
+        if not np.isnan(ph.iloc[i]): s_high = ph.iloc[i]
+        
+        if (i - last_idx) < cooldown: continue
+        hour = df.index[i].hour if isinstance(df.index, pd.DatetimeIndex) else 10
+        if not (7 <= hour < 18): continue
+        
+        c = df['close'].iloc[i]
+        o = df['open'].iloc[i]
+        h = df['high'].iloc[i]
+        l = df['low'].iloc[i]
+        a = atr.iloc[i] if not np.isnan(atr.iloc[i]) else 2.5
+        
+        if bool(htf_bull_strong.iloc[i]) and not np.isnan(s_low) and (l < s_low) and (c > s_low) and (c > o):
+            risk = min(max(c - l, a * 1.0), max_sl)
+            long_entry[i] = True
+            sl[i] = c - risk
+            tp[i] = c + (risk * rr)
+            last_idx = i
+        elif bool(htf_bear_strong.iloc[i]) and not np.isnan(s_high) and (h > s_high) and (c < s_high) and (c < o):
+            risk = min(max(h - c, a * 1.0), max_sl)
+            short_entry[i] = True
+            sl[i] = c + risk
+            tp[i] = c - (risk * rr)
+            last_idx = i
             
-        if not in_session:
-            continue
-            
-        c_close = close.iloc[i]
-        c_low = low.iloc[i]
-        c_high = high.iloc[i]
-        c_open = open_p.iloc[i]
-        
-        c_ema21 = ema_fast.iloc[i]
-        c_ema50 = ema_mid.iloc[i]
-        c_ema200 = ema_trend.iloc[i]
-        c_adx = adx.iloc[i]
-        c_rsi = rsi.iloc[i]
-        c_atr = atr.iloc[i]
-        
-        # Bullish Setup
-        bull_regime = (c_close > c_ema200) and (c_ema50 > c_ema200)
-        strong_trend = c_adx > adx_threshold and pos_di.iloc[i] > neg_di.iloc[i]
-        
-        # Pullback tag into value zone (low penetrates EMA 21 or EMA 50)
-        pullback_long = (low.iloc[i-1] <= ema_fast.iloc[i-1] or c_low <= c_ema21) and (42 <= c_rsi <= 65)
-        # Rejection candle: strong green close above open and close above EMA 21
-        bullish_candle = (c_close > c_open) and (c_close > c_ema21) and (c_close - c_low) > (c_high - c_close)
-        
-        if bull_regime and strong_trend and pullback_long and bullish_candle:
-            recent_low = min(low.iloc[i-3:i+1])
-            risk = c_close - recent_low
-            if risk > c_atr * 0.4: # Filter micro-stops
-                long_entries[i] = True
-                curr_sl = c_close - risk * sl_mult
-                curr_tp = c_close + risk * tp_mult
-                sl[i] = curr_sl
-                tp[i] = curr_tp
-                continue
-                
-        # Bearish Setup
-        bear_regime = (c_close < c_ema200) and (c_ema50 < c_ema200)
-        bear_trend = c_adx > adx_threshold and neg_di.iloc[i] > pos_di.iloc[i]
-        
-        pullback_short = (high.iloc[i-1] >= ema_fast.iloc[i-1] or c_high >= c_ema21) and (35 <= c_rsi <= 58)
-        bearish_candle = (c_close < c_open) and (c_close < c_ema21) and (c_high - c_close) > (c_close - c_low)
-        
-        if bear_regime and bear_trend and pullback_short and bearish_candle:
-            recent_high = max(high.iloc[i-3:i+1])
-            risk = recent_high - c_close
-            if risk > c_atr * 0.4:
-                short_entries[i] = True
-                curr_sl = c_close + risk * sl_mult
-                curr_tp = c_close - risk * tp_mult
-                sl[i] = curr_sl
-                tp[i] = curr_tp
+    return pd.DataFrame({
+        'long_entry': long_entry,
+        'short_entry': short_entry,
+        'long_exit': False,
+        'short_exit': False,
+        'stop_loss': sl,
+        'take_profit': tp
+    }, index=df.index)
 
-    signals['long_entry'] = long_entries
-    signals['short_entry'] = short_entries
-    signals['long_exit'] = False
-    signals['short_exit'] = False
-    signals['stop_loss'] = sl
-    signals['take_profit'] = tp
-    return signals
+if __name__ == '__main__':
+    search_5m_high_winrate()

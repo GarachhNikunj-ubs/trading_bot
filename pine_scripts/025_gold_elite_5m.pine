@@ -1,0 +1,116 @@
+// Strategy 25: Gold Elite 5-Minute Institutional Scalp Strategy
+// Timeframe: 5-Minute (Chart Timeframe: 5m, Symbol: XAUUSD / GC=F)
+// Features:
+// 1. 1H Higher Timeframe (HTF) Trend Confluence (50 EMA + Supertrend)
+// 2. 5M Institutional Liquidity Sweep (SMC Pivot High/Low Sweep & Rejection)
+// 3. Peak London & New York Session Liquidity Filter (07:00 - 18:00 UTC)
+// 4. Hard $8.00 Stop-Loss Cap (Strictly eliminates the 200+ point stop-out risk)
+//@version=6
+strategy("AlphaQuant - Gold Elite 5M Scalp", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.03, slippage=1)
+
+// ==========================================
+// 1. INPUT CONFIGURATION
+// ==========================================
+group_htf = "1. Higher Timeframe (1H) Trend Confluence"
+htfTimeframe = input.timeframe("60", "HTF Timeframe", group=group_htf)
+htfEmaLen    = input.int(50, "1H EMA Trend Baseline", group=group_htf)
+htfStPeriod  = input.int(10, "1H Supertrend ATR Period", group=group_htf)
+htfStMult    = input.float(3.0, "1H Supertrend Multiplier", step=0.1, group=group_htf)
+
+group_5m = "2. 5-Minute SMC Sweep Trigger"
+swingLen     = input.int(5, "5M Pivot Lookback (Left/Right)", group=group_5m)
+cooldownBars = input.int(6, "Cooldown Bars Between Trades", group=group_5m)
+
+group_risk = "3. Tight Risk Management (No 200+ Pt Losses)"
+maxSlDollars = input.float(8.0, "Max Stop Loss Cap ($ / oz)", minval=3.0, maxval=15.0, step=0.5, group=group_risk, tooltip="Hard cap to strictly limit risk. An $8.00 stop means you cannot lose more than $8 on Gold.")
+rrRatio      = input.float(1.2, "Risk-to-Reward Ratio (1:1.2)", minval=0.8, maxval=3.0, step=0.1, group=group_risk)
+slAtrMult    = input.float(1.0, "5M ATR Stop Multiple", step=0.1, group=group_risk)
+
+group_session = "4. London & NY Session Filter (UTC)"
+useSession   = input.bool(true, "Trade London/NY Sessions Only", group=group_session)
+sessionTime  = input.session("0700-1800", "Session Hours (UTC)", group=group_session)
+
+// ==========================================
+// 2. HIGHER TIMEFRAME (1H) CONFLUENCE
+// ==========================================
+htfClose = request.security(syminfo.tickerid, htfTimeframe, close)
+htfEma   = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, htfEmaLen))
+[htfStVal, htfStDir] = request.security(syminfo.tickerid, htfTimeframe, ta.supertrend(htfStMult, htfStPeriod))
+
+// HTF Trend confirmation: Close > 1H EMA 50 AND 1H Supertrend is Bullish
+htfBull = (htfClose > htfEma) and (htfStDir < 0)
+htfBear = (htfClose < htfEma) and (htfStDir > 0)
+
+// ==========================================
+// 3. 5-MINUTE SMC LIQUIDITY SWEEP DETECTION
+// ==========================================
+ph = ta.pivothigh(high, swingLen, swingLen)
+pl = ta.pivotlow(low, swingLen, swingLen)
+
+var float swingLowP = na
+var float swingHighP = na
+
+if not na(pl)
+    swingLowP := low[swingLen]
+
+if not na(ph)
+    swingHighP := high[swingLen]
+
+atr5m = ta.atr(14)
+
+// Liquidity Sweep Signals:
+// Bullish: Price sweeps below previous 5M swing low, but candle closes back ABOVE it with a green candle
+sweepBull = not na(swingLowP) and (low < swingLowP) and (close > swingLowP) and (close > open)
+// Bearish: Price sweeps above previous 5M swing high, but candle closes back BELOW it with a red candle
+sweepBear = not na(swingHighP) and (high > swingHighP) and (close < swingHighP) and (close < open)
+
+// ==========================================
+// 4. SESSION & COOLDOWN CONTROLS
+// ==========================================
+inSession = not useSession or not na(time(timeframe.period, sessionTime + ":1234567"))
+
+var int lastTradeBar = -999
+canTrade = (bar_index - lastTradeBar) >= cooldownBars
+
+longSignal  = htfBull and sweepBull and inSession and canTrade and (strategy.position_size == 0)
+shortSignal = htfBear and sweepBear and inSession and canTrade and (strategy.position_size == 0)
+
+// ==========================================
+// 5. BRACKET EXECUTION & TIGHT SL MANAGEMENT
+// ==========================================
+var float slPrice = na
+var float tpPrice = na
+
+if longSignal
+    rawRisk = math.max(close - low, atr5m * slAtrMult)
+    risk = math.min(rawRisk, maxSlDollars) // Hard capped at maxSlDollars ($8 max)
+    
+    slPrice := close - risk
+    tpPrice := close + (risk * rrRatio)
+    
+    strategy.entry("Elite_Long", strategy.long)
+    strategy.exit("Exit_Long", "Elite_Long", stop=slPrice, limit=tpPrice)
+    lastTradeBar := bar_index
+
+if shortSignal
+    rawRisk = math.max(high - close, atr5m * slAtrMult)
+    risk = math.min(rawRisk, maxSlDollars) // Hard capped at maxSlDollars ($8 max)
+    
+    slPrice := close + risk
+    tpPrice := close - (risk * rrRatio)
+    
+    strategy.entry("Elite_Short", strategy.short)
+    strategy.exit("Exit_Short", "Elite_Short", stop=slPrice, limit=tpPrice)
+    lastTradeBar := bar_index
+
+// ==========================================
+// 6. VISUAL OVERLAYS & SIGNALS
+// ==========================================
+plot(htfEma, "1H EMA Trend Baseline", color=color.new(color.orange, 20), linewidth=2)
+plot(swingLowP, "5M Swing Low Target", color=color.new(color.teal, 50), style=plot.style_circles, linewidth=1)
+plot(swingHighP, "5M Swing High Target", color=color.new(color.purple, 50), style=plot.style_circles, linewidth=1)
+
+bgcolor(inSession ? color.new(color.blue, 96) : na, title="London/NY Session Background")
+
+plotshape(longSignal, "Long Entry", shape.triangleup, location.belowbar, color.green, size=size.small, text="ELITE BUY")
+plotshape(shortSignal, "Short Entry", shape.triangledown, location.abovebar, color.red, size=size.small, text="ELITE SELL")
